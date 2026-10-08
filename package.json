@@ -8,6 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
     "cheerio": "^1.0.0-rc.12",
     "next": "latest",
     "react": "latest",
