@@ -66,32 +66,48 @@ ${trechoTexto}`;
       }
     }
 
-    // Se Groq não gerou e temos chave do Gemini, tentar Gemini
+    // Se Groq não respondeu, consultar lista de modelos dinâmicos do Gemini
     if (!respostaIa && geminiKey) {
-      const modelosGemini = ['gemini-1.5-flash', 'gemini-2.0-flash-exp', 'gemini-1.5-pro'];
-      
-      for (const mod of modelosGemini) {
-        try {
-          const geminiRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${mod}:generateContent?key=${geminiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }]
-              })
-            }
-          );
-          const geminiData = await geminiRes.json();
-          if (geminiData.candidates?.[0]?.content?.parts?.[0]?.text) {
-            respostaIa = geminiData.candidates[0].content.parts[0].text;
-            break;
-          } else if (geminiData.error) {
-            erroDetalhado += `Gemini (${mod}): ${geminiData.error.message} | `;
-          }
-        } catch (e) {
-          erroDetalhado += `Gemini (${mod}) falha: ${e.message} | `;
+      try {
+        const resList = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKey}`);
+        const dataList = await resList.json();
+
+        let modelosParaTestar = [];
+        if (dataList.models && Array.isArray(dataList.models)) {
+          modelosParaTestar = dataList.models
+            .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+            .map(m => m.name.replace('models/', ''));
         }
+
+        if (modelosParaTestar.length === 0) {
+          modelosParaTestar = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+        }
+
+        for (const mod of modelosParaTestar) {
+          try {
+            const geminiRes = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${mod}:generateContent?key=${geminiKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: prompt }] }]
+                })
+              }
+            );
+            const geminiData = await geminiRes.json();
+            if (geminiData.candidates?.[0]?.content?.parts?.[0]?.text) {
+              respostaIa = geminiData.candidates[0].content.parts[0].text;
+              break;
+            } else if (geminiData.error) {
+              erroDetalhado += `Gemini (${mod}): ${geminiData.error.message} | `;
+            }
+          } catch (e) {
+            erroDetalhado += `Gemini (${mod}) falha: ${e.message} | `;
+          }
+        }
+      } catch (e) {
+        erroDetalhado += `Erro ao consultar modelos Gemini: ${e.message} | `;
       }
     }
 
