@@ -4,6 +4,32 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
+// Função para filtrar e remover rascunhos de pensamento da IA
+function limparTextoIa(texto) {
+  if (!texto) return '';
+  
+  return texto
+    .split('\n')
+    .filter(linha => {
+      const l = linha.trim().toLowerCase();
+      return !l.startsWith('* role:') &&
+             !l.startsWith('* task:') &&
+             !l.startsWith('* input text:') &&
+             !l.startsWith('* subject:') &&
+             !l.startsWith('* purpose:') &&
+             !l.startsWith('* accessibility:') &&
+             !l.startsWith('* available formats:') &&
+             !l.startsWith('* timeframes:') &&
+             !l.startsWith('* language:') &&
+             !l.startsWith('bible study assistant') &&
+             !l.startsWith('summarize the provided text') &&
+             !l.includes('portuguese (brazil)?') &&
+             !l.includes('no english/drafts?');
+    })
+    .join('\n')
+    .trim();
+}
+
 export async function GET() {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -27,15 +53,8 @@ export async function GET() {
     const trechoTexto = $('article, .docSubContent, .synopsis').text().replace(/\s+/g, ' ').slice(0, 3000) || 'Conteúdo de estudo.';
     const semanaAtual = new Date().toISOString().slice(0, 10);
 
-    // 2. Prompt estrito para a IA
-    const prompt = `Você é um assistente de estudos bíblicos.
-INSTRUÇÕES:
-- Responda EXCLUSIVAMENTE em português do Brasil.
-- NÃO inclua rascunhos, análises do prompt ou pensamentos em inglês.
-- Escreva diretamente o resumo formatado com tópicos e pontos principais para estudo.
-
-Texto para resumir:
-${trechoTexto}`;
+    const systemPrompt = "Você é um assistente de estudos bíblicos. Sua ÚNICA tarefa é fornecer o resumo final em português do Brasil formatado em tópicos simples e claros. JAMAIS escreva rascunhos, planos de resposta, notas de verificação ou qualquer palavra em inglês.";
+    const userPrompt = `Faça o resumo em tópicos do seguinte texto:\n\n${trechoTexto}`;
 
     let respostaIa = '';
     let erroDetalhado = '';
@@ -51,8 +70,11 @@ ${trechoTexto}`;
           },
           body: JSON.stringify({
             model: 'llama-3.1-8b-instant',
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.3
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.2
           })
         });
         const groqData = await groqRes.json();
@@ -66,7 +88,7 @@ ${trechoTexto}`;
       }
     }
 
-    // Se Groq não respondeu, consultar lista de modelos dinâmicos do Gemini
+    // Tentar via Gemini com system_instruction nativa
     if (!respostaIa && geminiKey) {
       try {
         const resList = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKey}`);
@@ -91,7 +113,10 @@ ${trechoTexto}`;
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  contents: [{ parts: [{ text: prompt }] }]
+                  system_instruction: {
+                    parts: [{ text: systemPrompt }]
+                  },
+                  contents: [{ parts: [{ text: userPrompt }] }]
                 })
               }
             );
@@ -111,8 +136,11 @@ ${trechoTexto}`;
       }
     }
 
+    // Sanitiza a resposta removendo quaisquer rascunhos remanescentes
+    respostaIa = limparTextoIa(respostaIa);
+
     if (!respostaIa) {
-      respostaIa = `Não foi possível gerar a resposta pela IA. Detalhes: ${erroDetalhado || 'Verifique se GROQ_API_KEY ou GEMINI_API_KEY estão cadastradas nas Environment Variables da Vercel.'}`;
+      respostaIa = `Não foi possível gerar a resposta pela IA. Detalhes: ${erroDetalhado || 'Verifique as chaves nas variáveis da Vercel.'}`;
     }
 
     // 3. Gravar no Supabase
