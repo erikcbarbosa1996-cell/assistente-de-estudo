@@ -2,13 +2,21 @@ import { NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
 import { createClient } from '@supabase/supabase-js';
 
-// Inicializa o cliente do Supabase
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
+// Força a rota a ser executada em tempo de requisição (sem pré-renderização estática)
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('As variáveis de ambiente do Supabase não estão configuradas na Vercel.');
+    }
+
+    // Inicializa o cliente do Supabase dentro do handler
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
     // 1. Raspagem do conteúdo no JW.org
     const url = 'https://www.jw.org/pt/biblioteca/jw-apostilas-estudo/';
     const response = await fetch(url, { cache: 'no-store' });
