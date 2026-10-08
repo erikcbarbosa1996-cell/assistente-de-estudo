@@ -4,35 +4,6 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-// Extrai estritamente o conteúdo entre START_RESUMO e END_RESUMO
-function extrairApenasResumo(texto) {
-  if (!texto) return '';
-  
-  if (texto.includes('START_RESUMO')) {
-    const trecho = texto.split('START_RESUMO')[1];
-    if (trecho) {
-      return trecho.split('END_RESUMO')[0].trim();
-    }
-  }
-
-  // Fallback: se a IA não usou a tag, remove linhas típicas de rascunho/instrução
-  return texto
-    .split('\n')
-    .filter(linha => {
-      const l = linha.trim().toLowerCase();
-      return !l.includes('bible study assistant') &&
-             !l.includes('summarize') &&
-             !l.includes('respond exclusively') &&
-             !l.includes('no drafts') &&
-             !l.includes('write directly') &&
-             !l.includes('core subject') &&
-             !l.startsWith('* role:') &&
-             !l.startsWith('* task:');
-    })
-    .join('\n')
-    .trim();
-}
-
 export async function GET() {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -56,20 +27,22 @@ export async function GET() {
     const trechoTexto = $('article, .docSubContent, .synopsis').text().replace(/\s+/g, ' ').slice(0, 3000) || 'Conteúdo de estudo.';
     const semanaAtual = new Date().toISOString().slice(0, 10);
 
-    // Prompt estrito exigindo os marcadores de delimitação
-    const prompt = `Faça um resumo em português do Brasil, estruturado em tópicos, do texto a seguir.
+    // Prompt estrito para resposta estritamente em JSON
+    const prompt = `Resuma o texto a seguir em tópicos organizados em português do Brasil.
+Você DEVE responder EXCLUSIVAMENTE em formato JSON com a chave "resumo".
 
-REGRA OBRIGATÓRIA:
-Sua resposta DEVE começar exatamente com a palavra "START_RESUMO" e terminar com a palavra "END_RESUMO".
-Não inclua nada antes de START_RESUMO nem depois de END_RESUMO.
+Exemplo do formato esperado:
+{
+  "resumo": "• Ponto principal 1\\n• Ponto principal 2\\n• Ponto principal 3"
+}
 
 Texto:
 ${trechoTexto}`;
 
-    let respostaBruta = '';
+    let respostaIa = '';
     let erroDetalhado = '';
 
-    // Tentar via GROQ (Llama 3)
+    // Tentar via GROQ (Llama 3 com resposta JSON nativa)
     if (groqKey) {
       try {
         const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -81,12 +54,15 @@ ${trechoTexto}`;
           body: JSON.stringify({
             model: 'llama-3.1-8b-instant',
             messages: [{ role: 'user', content: prompt }],
-            temperature: 0.2
+            response_format: { type: 'json_object' },
+            temperature: 0.1
           })
         });
         const groqData = await groqRes.json();
-        if (groqData.choices?.[0]?.message?.content) {
-          respostaBruta = groqData.choices[0].message.content;
+        const rawJson = groqData.choices?.[0]?.message?.content;
+        if (rawJson) {
+          const parsed = JSON.parse(rawJson);
+          respostaIa = parsed.resumo || parsed.summary || rawJson;
         } else if (groqData.error) {
           erroDetalhado += `Groq: ${groqData.error.message} | `;
         }
@@ -95,8 +71,8 @@ ${trechoTexto}`;
       }
     }
 
-    // Tentar via Gemini
-    if (!respostaBruta && geminiKey) {
+    // Tentar via Gemini (com response_mime_type JSON)
+    if (!respostaIa && geminiKey) {
       try {
         const resList = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKey}`);
         const dataList = await resList.json();
@@ -120,13 +96,16 @@ ${trechoTexto}`;
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  contents: [{ parts: [{ text: prompt }] }]
+                  contents: [{ parts: [{ text: prompt }] }],
+                  generationConfig: { response_mime_type: 'application/json' }
                 })
               }
             );
             const geminiData = await geminiRes.json();
-            if (geminiData.candidates?.[0]?.content?.parts?.[0]?.text) {
-              respostaBruta = geminiData.candidates[0].content.parts[0].text;
+            const rawJson = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (rawJson) {
+              const parsed = JSON.parse(rawJson);
+              respostaIa = parsed.resumo || parsed.summary || rawJson;
               break;
             } else if (geminiData.error) {
               erroDetalhado += `Gemini (${mod}): ${geminiData.error.message} | `;
@@ -140,10 +119,9 @@ ${trechoTexto}`;
       }
     }
 
-    // Isola estritamente o texto dentro das tags
-    const resumoFinal = extrairApenasResumo(respostaBruta);
-
-    const conteudoParaSalvar = resumoFinal || `Não foi possível extrair o resumo limpo. Erros: ${erroDetalhado}`;
+    if (!respostaIa) {
+      respostaIa = `Não foi possível gerar o resumo. Erros: ${erroDetalhado}`;
+    }
 
     // 3. Gravar no Supabase
     const { error } = await supabase
@@ -153,7 +131,7 @@ ${trechoTexto}`;
           semana: semanaAtual,
           titulo: titulo,
           conteudo: { 
-            resumoIa: conteudoParaSalvar,
+            resumoIa: respostaIa,
             extraidoEm: new Date().toISOString() 
           }
         }
@@ -163,9 +141,9 @@ ${trechoTexto}`;
 
     return NextResponse.json({
       sucesso: true,
-      mensagem: 'Estudo processado e filtrado com sucesso!',
+      mensagem: 'Estudo processado em JSON e gravado com sucesso!',
       titulo,
-      resumoIa: conteudoParaSalvar
+      resumoIa: respostaIa
     });
   } catch (error) {
     return NextResponse.json({ sucesso: false, erro: error.message }, { status: 500 });
