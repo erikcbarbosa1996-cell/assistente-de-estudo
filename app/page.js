@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-export const revalidate = 0; // Garante que a página sempre carrega os dados mais recentes
+export const revalidate = 0;
 
 export default async function Home() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -19,46 +19,98 @@ export default async function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6 md:p-12 text-slate-800">
-      <div className="max-w-4xl mx-auto">
-        <header className="mb-10 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">
-            Assistente de Estudos
+    <div style={{
+      minHeight: '100vh',
+      backgroundColor: '#f8fafc',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      padding: '40px 20px',
+      color: '#1e293b'
+    }}>
+      <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+        
+        {/* Cabeçalho */}
+        <header style={{ textAlign: 'center', marginBottom: '40px' }}>
+          <h1 style={{ fontSize: '32px', fontWeight: '800', color: '#0f172a', marginBottom: '8px' }}>
+            📖 Assistente de Estudos
           </h1>
-          <p className="mt-2 text-slate-600">
-            Resumos automáticos e conteúdos de estudo semanal processados por IA
+          <p style={{ color: '#64748b', fontSize: '16px' }}>
+            Resumos automáticos e tópicos de estudo gerados por Inteligência Artificial
           </p>
         </header>
 
+        {/* Lista de Estudos */}
         {estudos.length === 0 ? (
-          <div className="bg-white p-8 rounded-xl shadow-sm text-center text-slate-500 border border-slate-200">
-            Nenhum estudo encontrado na base de dados.
+          <div style={{
+            backgroundColor: '#ffffff',
+            padding: '30px',
+            borderRadius: '12px',
+            textAlign: 'center',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+          }}>
+            Nenhum estudo cadastrado no momento.
           </div>
         ) : (
-          <div className="space-y-6">
-            {estudos.map((item) => (
-              <article key={item.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm transition hover:shadow-md">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-                  <span className="text-xs font-semibold px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full">
-                    Data: {item.semana}
-                  </span>
-                  <time className="text-xs text-slate-400">
-                    {new Date(item.created_at).toLocaleDateString('pt-PT')}
-                  </time>
-                </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {estudos.map((item) => {
+              const dataFormatada = new Date(item.created_at).toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+              });
 
-                <h2 className="text-xl font-semibold text-slate-900 mb-4">
-                  {item.titulo}
-                </h2>
+              return (
+                <article key={item.id} style={{
+                  backgroundColor: '#ffffff',
+                  borderRadius: '12px',
+                  padding: '24px',
+                  border: '1px solid #e2e8f0',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.04)'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    justify: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '16px',
+                    borderBottom: '1px solid #f1f5f9',
+                    paddingBottom: '12px'
+                  }}>
+                    <span style={{
+                      backgroundColor: '#eff6ff',
+                      color: '#2563eb',
+                      padding: '4px 12px',
+                      borderRadius: '20px',
+                      fontSize: '13px',
+                      fontWeight: '600'
+                    }}>
+                      Estudo Semanal
+                    </span>
+                    <span style={{ fontSize: '13px', color: '#94a3b8' }}>
+                      {dataFormatada}
+                    </span>
+                  </div>
 
-                <div className="bg-slate-50 p-4 rounded-lg text-sm leading-relaxed text-slate-700 whitespace-pre-line border border-slate-100">
-                  {item.conteudo?.resumoIa || 'Sem resumo disponível.'}
-                </div>
-              </article>
-            ))}
+                  <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#0f172a', marginBottom: '16px' }}>
+                    {item.titulo}
+                  </h2>
+
+                  <div style={{
+                    backgroundColor: '#f8fafc',
+                    padding: '20px',
+                    borderRadius: '8px',
+                    lineHeight: '1.7',
+                    fontSize: '15px',
+                    color: '#334155',
+                    whiteSpace: 'pre-line',
+                    borderLeft: '4px solid #2563eb'
+                  }}>
+                    {item.conteudo?.resumoIa || 'Sem resumo disponível.'}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </div>
-    </main>
+    </div>
   );
 }
