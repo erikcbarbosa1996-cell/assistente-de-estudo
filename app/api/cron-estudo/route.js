@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,26 +16,40 @@ export async function GET() {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // 1. Raspagem da página principal de Apostilas do Mês no JW.org
+    // 1. Raspagem da página de Apostilas no JW.org
     const url = 'https://www.jw.org/pt/biblioteca/jw-apostila-do-mes/';
     const response = await fetch(url, { cache: 'no-store' });
     const html = await response.text();
     const $ = cheerio.load(html);
 
-    // Extrai o título e matérias
+    // Extrai o título e texto
     const titulo = $('h1').first().text().trim() || 'Apostila de Estudo';
     const trechoTexto = $('article, .docSubContent, .synopsis').text().slice(0, 3000) || 'Conteúdo de estudo da semana.';
     const semanaAtual = new Date().toISOString().slice(0, 10);
 
-    // 2. Processar com o Gemini
+    // 2. Processar com o Gemini usando fetch nativo na API v1beta
     let respostaIa = 'Chave do Gemini não configurada.';
     if (geminiKey) {
-      const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       const prompt = `Você é um assistente de estudos bíblicos. Faça um resumo conciso e com pontos principais para estudo deste texto: ${trechoTexto}`;
-      
-      const result = await model.generateContent(prompt);
-      respostaIa = result.response.text();
+
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }]
+          })
+        }
+      );
+
+      const geminiData = await geminiRes.json();
+
+      if (geminiData.error) {
+        throw new Error(`Erro Gemini: ${geminiData.error.message}`);
+      }
+
+      respostaIa = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'Sem resposta gerada.';
     }
 
     // 3. Gravar no Supabase
