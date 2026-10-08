@@ -27,29 +27,44 @@ export async function GET() {
     const trechoTexto = $('article, .docSubContent, .synopsis').text().slice(0, 3000) || 'Conteúdo de estudo da semana.';
     const semanaAtual = new Date().toISOString().slice(0, 10);
 
-    // 2. Processar com o Gemini usando fetch nativo na API v1beta
+    // 2. Processar com o Gemini (com fallback automático de modelos)
     let respostaIa = 'Chave do Gemini não configurada.';
+
     if (geminiKey) {
       const prompt = `Você é um assistente de estudos bíblicos. Faça um resumo conciso e com pontos principais para estudo deste texto: ${trechoTexto}`;
+      const modelos = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash-latest'];
+      let ultimoErro = '';
 
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }]
-          })
+      for (const modelo of modelos) {
+        try {
+          const geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${geminiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }]
+              })
+            }
+          );
+
+          const geminiData = await geminiRes.json();
+
+          if (geminiData.candidates?.[0]?.content?.parts?.[0]?.text) {
+            respostaIa = geminiData.candidates[0].content.parts[0].text;
+            ultimoErro = '';
+            break;
+          } else if (geminiData.error) {
+            ultimoErro = geminiData.error.message;
+          }
+        } catch (err) {
+          ultimoErro = err.message;
         }
-      );
-
-      const geminiData = await geminiRes.json();
-
-      if (geminiData.error) {
-        throw new Error(`Erro Gemini: ${geminiData.error.message}`);
       }
 
-      respostaIa = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'Sem resposta gerada.';
+      if (ultimoErro && respostaIa === 'Chave do Gemini não configurada.') {
+        throw new Error(`Erro Gemini: ${ultimoErro}`);
+      }
     }
 
     // 3. Gravar no Supabase
