@@ -8,11 +8,13 @@
     "start": "next start"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.1.1",
+    "@ai-sdk/google": "^1.0.0",
     "@supabase/supabase-js": "^2.39.0",
+    "ai": "^4.0.0",
     "cheerio": "^1.0.0-rc.12",
     "next": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "zod": "^3.23.8"
   }
 }
