@@ -28,11 +28,11 @@ export async function GET() {
     const trechoTexto = $('article, .docSubContent, .synopsis').text().slice(0, 3000) || 'Conteúdo de estudo da semana.';
     const semanaAtual = new Date().toISOString().slice(0, 10);
 
-    // 2. Processar com o Gemini (se a chave estiver configurada)
+    // 2. Processar com o Gemini
     let respostaIa = 'Chave do Gemini não configurada.';
     if (geminiKey) {
       const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       const prompt = `Você é um assistente de estudos bíblicos. Faça um resumo conciso e com pontos principais para estudo deste texto: ${trechoTexto}`;
       
       const result = await model.generateContent(prompt);
