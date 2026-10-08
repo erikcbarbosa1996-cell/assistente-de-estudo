@@ -4,35 +4,6 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-// Função para buscar automaticamente o melhor modelo ativo na sua conta
-async function obterModeloAtivo(geminiKey) {
-  try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKey}`);
-    const data = await res.json();
-
-    if (data.error) {
-      throw new Error(`Erro na chave/API do Gemini: ${data.error.message}`);
-    }
-
-    if (data.models && Array.isArray(data.models)) {
-      // Filtra apenas modelos que suportam geração de conteúdo
-      const modelosSuportados = data.models.filter(m => 
-        m.supportedGenerationMethods?.includes('generateContent')
-      );
-
-      // Prioriza modelos 'flash' (mais rápidos)
-      const modeloFlash = modelosSuportados.find(m => m.name.includes('flash'));
-      if (modeloFlash) return modeloFlash.name;
-
-      // Se não achar 'flash', usa o primeiro modelo disponível
-      if (modelosSuportados.length > 0) return modelosSuportados[0].name;
-    }
-  } catch (err) {
-    console.error('Falha ao listar modelos:', err);
-  }
-  return 'models/gemini-1.5-flash';
-}
-
 export async function GET() {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -56,31 +27,69 @@ export async function GET() {
     const trechoTexto = $('article, .docSubContent, .synopsis').text().slice(0, 3000) || 'Conteúdo de estudo da semana.';
     const semanaAtual = new Date().toISOString().slice(0, 10);
 
-    // 2. Processar com o Gemini usando detecção automática de modelo
+    // 2. Processar com o Gemini
     let respostaIa = 'Chave do Gemini não configurada.';
 
     if (geminiKey) {
-      const modeloNome = await obterModeloAtivo(geminiKey);
       const prompt = `Você é um assistente de estudos bíblicos. Faça um resumo conciso e com pontos principais para estudo deste texto: ${trechoTexto}`;
 
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/${modeloNome}:generateContent?key=${geminiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }]
-          })
+      // Monta lista de candidatos a testar
+      let modelosParaTestar = [];
+      
+      try {
+        const resList = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKey}`);
+        const dataList = await resList.json();
+        if (dataList.models && Array.isArray(dataList.models)) {
+          modelosParaTestar = dataList.models
+            .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+            .map(m => m.name.replace('models/', ''));
         }
-      );
-
-      const geminiData = await geminiRes.json();
-
-      if (geminiData.error) {
-        throw new Error(`Erro Gemini (${modeloNome}): ${geminiData.error.message}`);
+      } catch (e) {
+        console.error('Erro ao listar modelos:', e);
       }
 
-      respostaIa = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'Sem resposta gerada.';
+      // Garante modelos padrão de reserva na lista
+      const reservas = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+      for (const res of reservas) {
+        if (!modelosParaTestar.includes(res)) {
+          modelosParaTestar.push(res);
+        }
+      }
+
+      let ultimoErro = '';
+      let sucessoIa = false;
+
+      // Testa cada modelo da lista até obter resposta VÁLIDA da IA
+      for (const modelo of modelosParaTestar) {
+        try {
+          const geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${geminiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }]
+              })
+            }
+          );
+
+          const geminiData = await geminiRes.json();
+
+          if (geminiData.candidates?.[0]?.content?.parts?.[0]?.text) {
+            respostaIa = geminiData.candidates[0].content.parts[0].text;
+            sucessoIa = true;
+            break; // Encontrou um modelo funcional, sai do loop!
+          } else if (geminiData.error) {
+            ultimoErro = geminiData.error.message;
+          }
+        } catch (err) {
+          ultimoErro = err.message;
+        }
+      }
+
+      if (!sucessoIa) {
+        throw new Error(`Erro Gemini: ${ultimoErro || 'Nenhum modelo respondeu com sucesso.'}`);
+      }
     }
 
     // 3. Gravar no Supabase
