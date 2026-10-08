@@ -4,27 +4,30 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-// Função para filtrar e remover rascunhos de pensamento da IA
-function limparTextoIa(texto) {
+// Extrai estritamente o conteúdo entre START_RESUMO e END_RESUMO
+function extrairApenasResumo(texto) {
   if (!texto) return '';
   
+  if (texto.includes('START_RESUMO')) {
+    const trecho = texto.split('START_RESUMO')[1];
+    if (trecho) {
+      return trecho.split('END_RESUMO')[0].trim();
+    }
+  }
+
+  // Fallback: se a IA não usou a tag, remove linhas típicas de rascunho/instrução
   return texto
     .split('\n')
     .filter(linha => {
       const l = linha.trim().toLowerCase();
-      return !l.startsWith('* role:') &&
-             !l.startsWith('* task:') &&
-             !l.startsWith('* input text:') &&
-             !l.startsWith('* subject:') &&
-             !l.startsWith('* purpose:') &&
-             !l.startsWith('* accessibility:') &&
-             !l.startsWith('* available formats:') &&
-             !l.startsWith('* timeframes:') &&
-             !l.startsWith('* language:') &&
-             !l.startsWith('bible study assistant') &&
-             !l.startsWith('summarize the provided text') &&
-             !l.includes('portuguese (brazil)?') &&
-             !l.includes('no english/drafts?');
+      return !l.includes('bible study assistant') &&
+             !l.includes('summarize') &&
+             !l.includes('respond exclusively') &&
+             !l.includes('no drafts') &&
+             !l.includes('write directly') &&
+             !l.includes('core subject') &&
+             !l.startsWith('* role:') &&
+             !l.startsWith('* task:');
     })
     .join('\n')
     .trim();
@@ -53,10 +56,17 @@ export async function GET() {
     const trechoTexto = $('article, .docSubContent, .synopsis').text().replace(/\s+/g, ' ').slice(0, 3000) || 'Conteúdo de estudo.';
     const semanaAtual = new Date().toISOString().slice(0, 10);
 
-    const systemPrompt = "Você é um assistente de estudos bíblicos. Sua ÚNICA tarefa é fornecer o resumo final em português do Brasil formatado em tópicos simples e claros. JAMAIS escreva rascunhos, planos de resposta, notas de verificação ou qualquer palavra em inglês.";
-    const userPrompt = `Faça o resumo em tópicos do seguinte texto:\n\n${trechoTexto}`;
+    // Prompt estrito exigindo os marcadores de delimitação
+    const prompt = `Faça um resumo em português do Brasil, estruturado em tópicos, do texto a seguir.
 
-    let respostaIa = '';
+REGRA OBRIGATÓRIA:
+Sua resposta DEVE começar exatamente com a palavra "START_RESUMO" e terminar com a palavra "END_RESUMO".
+Não inclua nada antes de START_RESUMO nem depois de END_RESUMO.
+
+Texto:
+${trechoTexto}`;
+
+    let respostaBruta = '';
     let erroDetalhado = '';
 
     // Tentar via GROQ (Llama 3)
@@ -70,26 +80,23 @@ export async function GET() {
           },
           body: JSON.stringify({
             model: 'llama-3.1-8b-instant',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
+            messages: [{ role: 'user', content: prompt }],
             temperature: 0.2
           })
         });
         const groqData = await groqRes.json();
         if (groqData.choices?.[0]?.message?.content) {
-          respostaIa = groqData.choices[0].message.content;
+          respostaBruta = groqData.choices[0].message.content;
         } else if (groqData.error) {
-          erroDetalhado += `Groq erro: ${groqData.error.message} | `;
+          erroDetalhado += `Groq: ${groqData.error.message} | `;
         }
       } catch (e) {
         erroDetalhado += `Groq falha: ${e.message} | `;
       }
     }
 
-    // Tentar via Gemini com system_instruction nativa
-    if (!respostaIa && geminiKey) {
+    // Tentar via Gemini
+    if (!respostaBruta && geminiKey) {
       try {
         const resList = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKey}`);
         const dataList = await resList.json();
@@ -113,16 +120,13 @@ export async function GET() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  system_instruction: {
-                    parts: [{ text: systemPrompt }]
-                  },
-                  contents: [{ parts: [{ text: userPrompt }] }]
+                  contents: [{ parts: [{ text: prompt }] }]
                 })
               }
             );
             const geminiData = await geminiRes.json();
             if (geminiData.candidates?.[0]?.content?.parts?.[0]?.text) {
-              respostaIa = geminiData.candidates[0].content.parts[0].text;
+              respostaBruta = geminiData.candidates[0].content.parts[0].text;
               break;
             } else if (geminiData.error) {
               erroDetalhado += `Gemini (${mod}): ${geminiData.error.message} | `;
@@ -132,16 +136,14 @@ export async function GET() {
           }
         }
       } catch (e) {
-        erroDetalhado += `Erro ao consultar modelos Gemini: ${e.message} | `;
+        erroDetalhado += `Erro consultar Gemini: ${e.message} | `;
       }
     }
 
-    // Sanitiza a resposta removendo quaisquer rascunhos remanescentes
-    respostaIa = limparTextoIa(respostaIa);
+    // Isola estritamente o texto dentro das tags
+    const resumoFinal = extrairApenasResumo(respostaBruta);
 
-    if (!respostaIa) {
-      respostaIa = `Não foi possível gerar a resposta pela IA. Detalhes: ${erroDetalhado || 'Verifique as chaves nas variáveis da Vercel.'}`;
-    }
+    const conteudoParaSalvar = resumoFinal || `Não foi possível extrair o resumo limpo. Erros: ${erroDetalhado}`;
 
     // 3. Gravar no Supabase
     const { error } = await supabase
@@ -151,7 +153,7 @@ export async function GET() {
           semana: semanaAtual,
           titulo: titulo,
           conteudo: { 
-            resumoIa: respostaIa,
+            resumoIa: conteudoParaSalvar,
             extraidoEm: new Date().toISOString() 
           }
         }
@@ -161,9 +163,9 @@ export async function GET() {
 
     return NextResponse.json({
       sucesso: true,
-      mensagem: 'Estudo processado com sucesso!',
+      mensagem: 'Estudo processado e filtrado com sucesso!',
       titulo,
-      resumoIa: respostaIa
+      resumoIa: conteudoParaSalvar
     });
   } catch (error) {
     return NextResponse.json({ sucesso: false, erro: error.message }, { status: 500 });
